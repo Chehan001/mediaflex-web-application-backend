@@ -1,0 +1,14 @@
+[
+  {
+    "domain": ".youtube.com",
+    "expirationDate": 1799999999,
+    "hostOnly": false,
+    "httpOnly": true,
+    "name": "LOGIN_INFO",
+    "path": "/",
+    "sameSite": "no_restriction",
+    "secure": true,
+    "session": false,
+    "value": "PASTE_YOUR_VALUE_HERE"
+  }
+]
