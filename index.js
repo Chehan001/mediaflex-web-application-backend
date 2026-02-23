@@ -7,7 +7,6 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const { v4: uuidv4 } = require('uuid');
 const { execSync } = require('child_process');
-
 const ytDlp = require('yt-dlp-exec');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
@@ -19,7 +18,7 @@ const HOST = process.env.HOST || 'localhost';
 const activeDownloads = new Map();
 const downloadReadyCallbacks = new Map();
 
-//  aria2c detection 
+// aria2c detection
 let hasAria2c = false;
 let aria2cPath = 'aria2c';
 const userLocalAppData = process.env.LOCALAPPDATA || '';
@@ -64,27 +63,26 @@ for (const p of aria2cPaths) {
   } catch {}
 }
 
-if (!hasAria2c) {
-  console.log(' aria2c not found (optional).');
-}
+if (!hasAria2c) console.log('aria2c not found (optional).');
 
-//  middleware 
-const corsOptions = {
-  origin: ['http://localhost:3000'],
-  methods: ['GET', 'POST', 'DELETE'],
-  credentials: true,
-};
-app.use(cors(corsOptions));
+// middleware
+app.use(
+  cors({
+    origin: ['http://localhost:3000'],
+    methods: ['GET', 'POST', 'DELETE'],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
-//  downloads dir
+// downloads dir
 const DOWNLOADS_DIR =
   process.env.DOWNLOADS_DIR ||
   (process.env.NODE_ENV === 'production' ? '/tmp/downloads' : path.join(__dirname, 'downloads'));
 
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
-// cookies 
+// cookies
 const cookiesPath = path.join(__dirname, 'cookies.txt');
 let cookieStatus = { valid: false, message: '', expiringSoon: false };
 let hasCookies = fs.existsSync(cookiesPath);
@@ -137,9 +135,7 @@ const checkDiskSpace = async (requiredBytes = 0) => {
             : `${freeGB}GB available`,
       };
     } else {
-      const result = execSync(`df -B1 "${DOWNLOADS_DIR}" | tail -1 | awk '{print $4}'`, {
-        encoding: 'utf8',
-      }).trim();
+      const result = execSync(`df -B1 "${DOWNLOADS_DIR}" | tail -1 | awk '{print $4}'`, { encoding: 'utf8' }).trim();
       const freeBytes = parseInt(result, 10);
       const freeGB = (freeBytes / (1024 * 1024 * 1024)).toFixed(2);
       const minRequired = Math.max(1024 * 1024 * 1024, requiredBytes + 500 * 1024 * 1024);
@@ -205,7 +201,7 @@ const sendProgress = (downloadId, data) => {
   if (res) res.write(`data: ${JSON.stringify(data)}\n\n`);
 };
 
-//  health
+// health
 app.get('/api/health', async (req, res) => {
   const diskInfo = await checkDiskSpace();
   const freshCookieStatus = checkCookieHealth();
@@ -219,122 +215,7 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// youtube: metadata 
-app.post('/api/video-metadata', async (req, res) => {
-  try {
-    let { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    url = cleanYouTubeUrl(url);
-
-    const options = {
-      dumpSingleJson: true,
-      noCheckCertificates: true,
-      noWarnings: true,
-      skipDownload: true,
-      noPlaylist: true,
-      playlistItems: '1',
-    };
-    if (hasCookies) options.cookies = cookiesPath;
-
-    const info = await ytDlp(url, options);
-
-    res.json({
-      title: info.title,
-      thumbnail: info.thumbnail,
-      duration: info.duration,
-      author: info.uploader || info.channel,
-      viewCount: info.view_count,
-      isLive: info.is_live,
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message || 'Failed to fetch video metadata' });
-  }
-});
-
-// youtube  formats
-app.post('/api/video-formats', async (req, res) => {
-  try {
-    let { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    url = cleanYouTubeUrl(url);
-
-    const options = {
-      dumpSingleJson: true,
-      noCheckCertificates: true,
-      noWarnings: true,
-      skipDownload: true,
-      noPlaylist: true,
-      playlistItems: '1',
-    };
-    if (hasCookies) options.cookies = cookiesPath;
-
-    const info = await ytDlp(url, options);
-
-    const formats = [];
-    const seen = new Set();
-
-    const videoFormats = (info.formats || [])
-      .filter((f) => f.vcodec !== 'none' && f.height && f.protocol !== 'm3u8_native' && f.protocol !== 'm3u8')
-      .sort((a, b) => (b.height || 0) - (a.height || 0));
-
-    formats.push({
-      formatId: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-      quality: 'Best Quality',
-      container: 'mp4',
-      hasVideo: true,
-      hasAudio: true,
-      filesize: null,
-      type: 'video',
-    });
-    seen.add('Best Quality');
-
-    for (const f of videoFormats) {
-      const q = `${f.height}p`;
-      if (!seen.has(q) && seen.size < 7) {
-        seen.add(q);
-        formats.push({
-          formatId: `bestvideo[height<=${f.height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${f.height}]+bestaudio/best[height<=${f.height}]`,
-          quality: q,
-          container: 'mp4',
-          hasVideo: true,
-          hasAudio: f.acodec !== 'none',
-          filesize: f.filesize || f.filesize_approx,
-          type: 'video',
-        });
-      }
-    }
-
-    const audioFormats = (info.formats || [])
-      .filter((f) => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'))
-      .sort((a, b) => (b.abr || b.tbr || 0) - (a.abr || a.tbr || 0));
-
-    const seenAudio = new Set();
-    for (const f of audioFormats) {
-      const bitrate = Math.round(f.abr || f.tbr || 0);
-      const label = bitrate ? `${bitrate}kbps` : 'audio';
-      if (!seenAudio.has(label) && seenAudio.size < 5) {
-        seenAudio.add(label);
-        formats.push({
-          formatId: f.format_id,
-          quality: label,
-          container: f.ext,
-          hasVideo: false,
-          hasAudio: true,
-          filesize: f.filesize || f.filesize_approx,
-          type: 'audio',
-        });
-      }
-    }
-
-    res.json({ formats });
-  } catch (e) {
-    res.status(500).json({ error: e.message || 'Failed to fetch formats' });
-  }
-});
-
-//  general info endpoint 
+// ✅ GENERAL VIDEO INFO (works for many sites)
 app.post('/api/video-info', async (req, res) => {
   try {
     let { url } = req.body;
@@ -354,12 +235,13 @@ app.post('/api/video-info', async (req, res) => {
     if (hasCookies) options.cookies = cookiesPath;
 
     const info = await ytDlp(url, options);
+
     const formats = (info.formats || [])
       .filter((f) => f.url && (f.ext === 'mp4' || f.ext === 'm4a' || f.ext === 'webm'))
-      .slice(0, 20)
+      .slice(0, 30)
       .map((f) => ({
         formatId: f.format_id,
-        quality: f.height ? `${f.height}p` : (f.abr ? `${Math.round(f.abr)}kbps` : 'unknown'),
+        quality: f.height ? `${f.height}p` : f.abr ? `${Math.round(f.abr)}kbps` : 'unknown',
         container: f.ext,
         hasVideo: f.vcodec && f.vcodec !== 'none',
         hasAudio: f.acodec && f.acodec !== 'none',
@@ -379,60 +261,22 @@ app.post('/api/video-info', async (req, res) => {
   }
 });
 
-/* FACEBOOK ROUTES  */
-app.post('/api/facebook/video-info', async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    const options = {
-      dumpSingleJson: true,
-      noCheckCertificates: true,
-      noWarnings: true,
-      skipDownload: true,
-      noPlaylist: true,
-      playlistItems: '1',
-    };
-    if (hasCookies) options.cookies = cookiesPath;
-
-    const info = await ytDlp(url, options);
-
-    // Create formats for your FacebookDownloader UI
-    const formats = (info.formats || [])
-      .filter((f) => (f.ext === 'mp4' || f.ext === 'webm') && f.vcodec && f.vcodec !== 'none')
-      .sort((a, b) => (b.height || 0) - (a.height || 0))
-      .slice(0, 8)
-      .map((f) => ({
-        formatId: f.format_id,
-        quality: f.height ? `${f.height}p` : (f.format_note || 'Video'),
-        container: f.ext || 'mp4',
-        filesize: f.filesize || f.filesize_approx || null,
-        hasVideo: true,
-        hasAudio: f.acodec && f.acodec !== 'none',
-      }));
-
-    res.json({
-      title: info.title,
-      thumbnail: info.thumbnail,
-      duration: info.duration,
-      author: info.uploader || info.channel,
-      viewCount: info.view_count,
-      isPrivate: false, 
-      formats: formats.length ? formats : [{
-        formatId: 'best',
-        quality: 'Best',
-        container: 'mp4',
-        filesize: null,
-        hasVideo: true,
-        hasAudio: true,
-      }],
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message || 'Failed to fetch Facebook video info' });
-  }
+//
+// ✅ TWITTER ROUTES (fix your 404)
+// These use the same general yt-dlp logic
+//
+app.post('/api/twitter/video-info', async (req, res) => {
+  return app._router.handle(
+    { ...req, url: '/api/video-info', originalUrl: '/api/video-info' },
+    res,
+    () => {}
+  );
 });
 
-app.post('/api/facebook/download-start', async (req, res) => {
+//
+// ✅ Download handler used by /api/download-start, /api/twitter/download-start, /api/facebook/download-start
+//
+const downloadStartHandler = async (req, res) => {
   try {
     let { url, formatId, estimatedSize } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
@@ -466,9 +310,73 @@ app.post('/api/facebook/download-start', async (req, res) => {
 
     processDownload(downloadId, url, format);
   } catch (e) {
-    res.status(500).json({ error: e.message || 'Failed to start Facebook download' });
+    res.status(500).json({ error: e.message || 'Failed to start download' });
+  }
+};
+
+// ✅ Generic download-start
+app.post('/api/download-start', downloadStartHandler);
+
+// ✅ Twitter download-start (fix your issue)
+app.post('/api/twitter/download-start', downloadStartHandler);
+
+/* FACEBOOK ROUTES */
+app.post('/api/facebook/video-info', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    const options = {
+      dumpSingleJson: true,
+      noCheckCertificates: true,
+      noWarnings: true,
+      skipDownload: true,
+      noPlaylist: true,
+      playlistItems: '1',
+    };
+    if (hasCookies) options.cookies = cookiesPath;
+
+    const info = await ytDlp(url, options);
+
+    const formats = (info.formats || [])
+      .filter((f) => (f.ext === 'mp4' || f.ext === 'webm') && f.vcodec && f.vcodec !== 'none')
+      .sort((a, b) => (b.height || 0) - (a.height || 0))
+      .slice(0, 8)
+      .map((f) => ({
+        formatId: f.format_id,
+        quality: f.height ? `${f.height}p` : f.format_note || 'Video',
+        container: f.ext || 'mp4',
+        filesize: f.filesize || f.filesize_approx || null,
+        hasVideo: true,
+        hasAudio: f.acodec && f.acodec !== 'none',
+      }));
+
+    res.json({
+      title: info.title,
+      thumbnail: info.thumbnail,
+      duration: info.duration,
+      author: info.uploader || info.channel,
+      viewCount: info.view_count,
+      isPrivate: false,
+      formats: formats.length
+        ? formats
+        : [
+            {
+              formatId: 'best',
+              quality: 'Best',
+              container: 'mp4',
+              filesize: null,
+              hasVideo: true,
+              hasAudio: true,
+            },
+          ],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Failed to fetch Facebook video info' });
   }
 });
+
+app.post('/api/facebook/download-start', downloadStartHandler);
 
 // SSE progress
 app.get('/api/download-progress/:downloadId', (req, res) => {
@@ -503,6 +411,7 @@ async function processDownload(downloadId, url, format) {
 
     await downloadWithYtDlp(downloadId, url, format, outputPath);
 
+    // ✅ important: send the same filename your frontend will request
     sendProgress(downloadId, {
       status: 'completed',
       filename: `${safeTitle}.mp4`,
@@ -515,8 +424,6 @@ async function processDownload(downloadId, url, format) {
 
 function downloadWithYtDlp(downloadId, url, format, outputPath) {
   return new Promise((resolve, reject) => {
-    const ytDlpExec = require('yt-dlp-exec');
-
     const options = {
       format,
       output: outputPath,
@@ -538,7 +445,8 @@ function downloadWithYtDlp(downloadId, url, format, outputPath) {
       sendProgress(downloadId, { status: 'downloading', progress: Math.round(p), stage: 'Downloading...' });
     }, 900);
 
-    ytDlpExec.exec(url, options)
+    ytDlp
+      .exec(url, options)
       .then(() => {
         clearInterval(t);
         sendProgress(downloadId, { status: 'processing', progress: 95, stage: 'Finalizing...' });
@@ -571,9 +479,11 @@ app.get('/api/download-file/:downloadId', (req, res) => {
 
 if (require.main === module) {
   app.listen(PORT, HOST, () => {
-    console.log(` Server running http://${HOST}:${PORT}`);
-    console.log(` API base: http://${HOST}:${PORT}/api`);
-    console.log('Facebook routes enabled: /api/facebook/video-info and /api/facebook/download-start');
+    console.log(`Server running http://${HOST}:${PORT}`);
+    console.log(`API base: http://${HOST}:${PORT}/api`);
+    console.log('Facebook routes: /api/facebook/video-info + /api/facebook/download-start');
+    console.log('Twitter routes: /api/twitter/video-info + /api/twitter/download-start');
+    console.log('Generic download: /api/download-start');
   });
 }
 
