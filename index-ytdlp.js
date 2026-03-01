@@ -69,7 +69,7 @@ app.post('/api/video-metadata', async (req, res) => {
         if (!url) return res.status(400).json({ error: 'URL is required' });
 
         console.log('Fetching metadata for:', url);
-        
+
         const options = {
             dumpSingleJson: true,
             noCheckCertificates: true,
@@ -77,11 +77,11 @@ app.post('/api/video-metadata', async (req, res) => {
             skipDownload: true,
             flatPlaylist: true,
         };
-        
+
         if (hasCookies) options.cookies = cookiesPath;
 
         const info = await ytDlp(url, options);
-        
+
         console.log(' Got metadata for:', info.title);
 
         res.json({
@@ -112,7 +112,7 @@ app.post('/api/video-formats', async (req, res) => {
             noWarnings: true,
             skipDownload: true,
         };
-        
+
         if (hasCookies) options.cookies = cookiesPath;
 
         const info = await ytDlp(url, options);
@@ -196,7 +196,7 @@ app.post('/api/video-info', async (req, res) => {
             noWarnings: true,
             skipDownload: true,
         };
-        
+
         if (hasCookies) options.cookies = cookiesPath;
 
         const info = await ytDlp(url, options);
@@ -270,7 +270,7 @@ app.post('/api/video-info', async (req, res) => {
 // SSE endpoint for download progress
 app.get('/api/download-progress/:downloadId', (req, res) => {
     const { downloadId } = req.params;
-    
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -278,7 +278,7 @@ app.get('/api/download-progress/:downloadId', (req, res) => {
 
     res.write(`data: ${JSON.stringify({ status: 'connected', downloadId })}\n\n`);
     activeDownloads.set(downloadId, res);
-    
+
     const callback = downloadReadyCallbacks.get(downloadId);
     if (callback) {
         callback();
@@ -321,7 +321,7 @@ app.post('/api/download-start', async (req, res) => {
                 downloadReadyCallbacks.delete(downloadId);
                 resolve();
             }, 5000);
-            
+
             downloadReadyCallbacks.set(downloadId, () => {
                 clearTimeout(timeout);
                 resolve();
@@ -346,14 +346,14 @@ async function processDownload(downloadId, url, format, convertToMp3, mp3Bitrate
         // Get video info first
         const infoOptions = { dumpSingleJson: true, noWarnings: true };
         if (hasCookies) infoOptions.cookies = cookiesPath;
-        
+
         const info = await ytDlp(url, infoOptions);
         const title = info.title.replace(/[^\w\s-]/gi, '').replace(/\s+/g, '_').substring(0, 100);
-        
+
         // Determine output file
         let outputFilename;
         let outputPath;
-        
+
         // Check if format is video or audio
         const selectedFormat = info.formats.find(f => f.format_id === format);
         const isAudioOnly = selectedFormat && selectedFormat.vcodec === 'none';
@@ -374,8 +374,8 @@ async function processDownload(downloadId, url, format, convertToMp3, mp3Bitrate
             await downloadWithYtDlp(downloadId, url, format, outputPath);
         }
 
-        sendProgress(downloadId, { 
-            status: 'completed', 
+        sendProgress(downloadId, {
+            status: 'completed',
             filename: outputFilename,
             downloadId: downloadId
         });
@@ -417,8 +417,16 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
         console.log('Running yt-dlp download...');
 
-        // Use yt-dlp-exec's built-in binary
-        const ytDlpPath = require('yt-dlp-exec').path;
+        // yt-dlp-exec version 1.0.2 does not export .path directly. 
+        // We resolve it robustly from constants or manual path.
+        let ytDlpPath = require('yt-dlp-exec').path;
+        if (!ytDlpPath) {
+            try {
+                ytDlpPath = require('yt-dlp-exec/src/constants').YOUTUBE_DL_PATH;
+            } catch (e) {
+                ytDlpPath = path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', 'yt-dlp.exe');
+            }
+        }
         const proc = spawn(ytDlpPath, args, {
             windowsHide: true
         });
@@ -427,27 +435,27 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
         proc.stdout.on('data', (data) => {
             const output = data.toString();
-            
+
             // Parse progress
             const progressMatch = output.match(/(\d+\.?\d*)%/);
             if (progressMatch) {
                 const progress = Math.round(parseFloat(progressMatch[1]));
                 if (progress !== lastProgress) {
                     lastProgress = progress;
-                    sendProgress(downloadId, { 
-                        status: 'downloading', 
-                        progress, 
-                        stage: `Downloading... ${progress}%` 
+                    sendProgress(downloadId, {
+                        status: 'downloading',
+                        progress,
+                        stage: `Downloading... ${progress}%`
                     });
                 }
             }
 
             // Check for merging stage
             if (output.includes('Merging') || output.includes('merging')) {
-                sendProgress(downloadId, { 
-                    status: 'processing', 
-                    progress: 95, 
-                    stage: 'Merging video & audio...' 
+                sendProgress(downloadId, {
+                    status: 'processing',
+                    progress: 95,
+                    stage: 'Merging video & audio...'
                 });
             }
         });
@@ -460,10 +468,10 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
                 const progress = Math.round(parseFloat(progressMatch[1]));
                 if (progress !== lastProgress) {
                     lastProgress = progress;
-                    sendProgress(downloadId, { 
-                        status: 'downloading', 
-                        progress, 
-                        stage: `Downloading... ${progress}%` 
+                    sendProgress(downloadId, {
+                        status: 'downloading',
+                        progress,
+                        stage: `Downloading... ${progress}%`
                     });
                 }
             }
