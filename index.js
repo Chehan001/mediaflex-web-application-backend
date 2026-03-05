@@ -125,11 +125,7 @@ if (!hasAria2c) {
 
 // Middleware
 const corsOptions = {
-  origin: [
-    'http://localhost:3000',
-    'https://mediaflex-downloder.web.app',
-    'https://mediaflex-downloder.firebaseapp.com'
-  ],
+  origin: 'http://localhost:3000',
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 };
@@ -1244,11 +1240,11 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(` Server running on http://${HOST}:${PORT}`);
-  console.log(` API endpoints at http://${HOST}:${PORT}/api`);
+app.listen(PORT, 'localhost', () => {
+  console.log(` Server running on http://localhost:${PORT}`);
+  console.log(` API endpoints at http://localhost:${PORT}/api`);
   console.log(`  FFmpeg path: ${ffmpegStatic}`);
-  console.log(' Local development mode enabled');
+  console.log(' Localhost-only mode enabled');
 });
 
 module.exports = app;
