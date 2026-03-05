@@ -1,13 +1,17 @@
-name: Deploy Server to Azure Web App
+name: Deploy Server to Azure Web App - MediaFlex
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -17,20 +21,22 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install and build
-        run: |
-          npm ci
-          npm run build --if-present
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Zip for deployment
-        run: zip -r release.zip . -x "node_modules/*" ".git/*" ".github/*"
+      - name: Build (if present)
+        run: npm run build --if-present
+
+      # Create a clean zip package (avoid node_modules)
+      - name: Create deployment package
+        run: zip -r release.zip . -x "node_modules/*" ".git/*"
 
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_20A65499733041C9A984CED6BEF87CB8 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_75F741814B194A8E8B15A455650064A3 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_BB70383D8CEF4D239701B68D20ED42F0 }}
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
@@ -38,7 +44,3 @@ jobs:
           app-name: "MediaFlex"
           slot-name: "Production"
           package: release.zip
-
-      - name: Logout from Azure
-        run: az logout
-        if: always()
