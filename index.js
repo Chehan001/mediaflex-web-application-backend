@@ -9,6 +9,7 @@ const path = require('path');
 
 const ytDlpExec = require('yt-dlp-exec');
 
+
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const app = express();
@@ -21,7 +22,8 @@ const downloadReadyCallbacks = new Map();
 // Cookie Conversion 
 const convertCookiesIfMissing = () => {
   const jsonPath = path.join(__dirname, 'cookies.json');
-  const txtPath = path.join(__dirname, 'cookies.txt');
+  // Use /tmp in production for writable space
+  const txtPath = process.env.NODE_ENV === 'production' ? '/tmp/cookies.txt' : path.join(__dirname, 'cookies.txt');
 
   if (fs.existsSync(jsonPath)) {
     try {
@@ -33,7 +35,7 @@ const convertCookiesIfMissing = () => {
       }
 
       if (!txtStat || jsonStat.mtime > txtStat.mtime) {
-        console.log('Converting cookies.json to cookies.txt...');
+        console.log(`Converting cookies.json to ${txtPath}...`);
         const rawContent = fs.readFileSync(jsonPath, 'utf8');
         let allCookies = [];
         try {
@@ -123,7 +125,11 @@ if (!hasAria2c) {
 
 // Middleware
 const corsOptions = {
-  origin: ['http://localhost:3000'],
+  origin: [
+    'http://localhost:3000',
+    'https://mediaflex-downloder.web.app',
+    'https://mediaflex-downloder.firebaseapp.com'
+  ],
   methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 };
@@ -141,7 +147,7 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
 }
 
 // Cookies
-const cookiesPath = path.join(__dirname, 'cookies.txt');
+const cookiesPath = process.env.NODE_ENV === 'production' ? '/tmp/cookies.txt' : path.join(__dirname, 'cookies.txt');
 let hasCookies = fs.existsSync(cookiesPath);
 let cookieStatus = { valid: false, message: '', expiringSoon: false };
 
@@ -851,7 +857,7 @@ const handleGenericPlatformDownloadStart = async (req, res, platform) => {
     let format = formatId || 'best';
 
     if (platform === 'tiktok' && removeWatermark) {
-    
+
     }
 
     const diskInfo = await checkDiskSpace(estimatedSize || 500 * 1024 * 1024);
@@ -1143,7 +1149,9 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
       try {
         ytDlpPath = require('yt-dlp-exec/src/constants').YOUTUBE_DL_PATH;
       } catch (e) {
-        ytDlpPath = path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', 'yt-dlp.exe');
+        // Handle production environment (Linux) and windows fallback
+        const binExt = process.platform === 'win32' ? '.exe' : '';
+        ytDlpPath = path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', `yt-dlp${binExt}`);
       }
     }
 
@@ -1236,13 +1244,11 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
 
 // Start server
-if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(` Server running on ${HOST}:${PORT}`);
-    console.log(` API endpoints: http://${HOST}:${PORT}/api`);
-    console.log(` FFmpeg path: ${ffmpegStatic}`);
-    console.log(' Facebook routes enabled: /api/facebook/video-info and /api/facebook/download-start');
-  });
-}
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(` Server running on http://${HOST}:${PORT}`);
+  console.log(` API endpoints at http://${HOST}:${PORT}/api`);
+  console.log(`  FFmpeg path: ${ffmpegStatic}`);
+  console.log(' Local development mode enabled');
+});
 
 module.exports = app;
