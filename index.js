@@ -9,27 +9,28 @@ const path = require('path');
 
 const ytDlpExec = require('yt-dlp-exec');
 
-
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || 'localhost';
+const HOST = process.env.HOST || '0.0.0.0';
 
 const activeDownloads = new Map();
 const downloadReadyCallbacks = new Map();
 
-// Cookie Conversion 
+/* Cookie Conversion */
 const convertCookiesIfMissing = () => {
   const jsonPath = path.join(__dirname, 'cookies.json');
-  // Use /tmp in production for writable space
-  const txtPath = process.env.NODE_ENV === 'production' ? '/tmp/cookies.txt' : path.join(__dirname, 'cookies.txt');
+  const txtPath =
+    process.env.NODE_ENV === 'production'
+      ? '/tmp/cookies.txt'
+      : path.join(__dirname, 'cookies.txt');
 
   if (fs.existsSync(jsonPath)) {
     try {
-      // Check if txt is missing json
       const jsonStat = fs.statSync(jsonPath);
       let txtStat = null;
+
       if (fs.existsSync(txtPath)) {
         txtStat = fs.statSync(txtPath);
       }
@@ -38,35 +39,40 @@ const convertCookiesIfMissing = () => {
         console.log(`Converting cookies.json to ${txtPath}...`);
         const rawContent = fs.readFileSync(jsonPath, 'utf8');
         let allCookies = [];
+
         try {
           allCookies = JSON.parse(rawContent);
         } catch (e) {
-          // Try to fix multiple JSON arrays
-          const fixedContent = '[' + rawContent.replace(/\]\s*\[/g, ',').replace(/^\s*\[|\]\s*$/g, '') + ']';
+          const fixedContent =
+            '[' +
+            rawContent.replace(/\]\s*\[/g, ',').replace(/^\s*\[|\]\s*$/g, '') +
+            ']';
           allCookies = JSON.parse(fixedContent);
         }
 
         if (Array.isArray(allCookies)) {
           let output = '# Netscape HTTP Cookie File\n';
-          allCookies.forEach(c => {
+          allCookies.forEach((c) => {
             const domain = c.domain.startsWith('.') ? c.domain : '.' + c.domain;
             const sub = domain.startsWith('.') ? 'TRUE' : 'FALSE';
             const exp = Math.floor(c.expirationDate || 0);
-            output += `${domain}\t${sub}\t${c.path || '/'}\t${c.secure ? 'TRUE' : 'FALSE'}\t${exp}\t${c.name}\t${c.value}\n`;
+            output += `${domain}\t${sub}\t${c.path || '/'}\t${
+              c.secure ? 'TRUE' : 'FALSE'
+            }\t${exp}\t${c.name}\t${c.value}\n`;
           });
           fs.writeFileSync(txtPath, output);
-          console.log(' Cookies converted successfully');
+          console.log('Cookies converted successfully');
         }
       }
     } catch (err) {
-      console.error(' Cookie conversion failed:', err.message);
+      console.error('Cookie conversion failed:', err.message);
     }
   }
 };
 
 convertCookiesIfMissing();
 
-// aria2c detection
+/* aria2c detection */
 let hasAria2c = false;
 let aria2cPath = 'aria2c';
 const userLocalAppData = process.env.LOCALAPPDATA || '';
@@ -78,10 +84,8 @@ let aria2cPaths = [
   'C:\\ProgramData\\chocolatey\\bin\\aria2c.exe',
 ];
 
-// Deduplicate paths
 aria2cPaths = Array.from(new Set(aria2cPaths));
 
-// Also search WinGet Packages folder (best-effort)
 try {
   const wingetPackages = path.join(userLocalAppData, 'Microsoft', 'WinGet', 'Packages');
   if (fs.existsSync(wingetPackages)) {
@@ -98,52 +102,77 @@ try {
             return fullPath;
           }
         }
-      } catch (e) { }
+      } catch (e) {}
       return null;
     };
+
     const found = findAria2c(wingetPackages);
     if (found) aria2cPaths.unshift(found);
     aria2cPaths = Array.from(new Set(aria2cPaths));
   }
-} catch (e) { }
+} catch (e) {}
 
 for (const p of aria2cPaths) {
   try {
     execSync(`"${p}" --version`, { stdio: 'ignore' });
     hasAria2c = true;
     aria2cPath = p;
-    console.log(` aria2c found at: ${p.length > 50 ? '...' + p.slice(-47) : p}`);
-    console.log(' Multi-threaded downloads enabled (16 connections) for non-YouTube');
+    console.log(`aria2c found at: ${p.length > 50 ? '...' + p.slice(-47) : p}`);
+    console.log('Multi-threaded downloads enabled (16 connections) for non-YouTube');
     break;
-  } catch (e) { }
+  } catch (e) {}
 }
 
 if (!hasAria2c) {
-  console.log(' aria2c not found - using standard downloads (install aria2c for faster downloads)');
-  console.log('   Run: winget install aria2.aria2');
+  console.log('aria2c not found - using standard downloads');
+  console.log('Run: winget install aria2.aria2');
 }
 
-// Middleware
+/* Middleware / CORS */
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL_2,
+].filter(Boolean);
+
 const corsOptions = {
-  origin: 'http://localhost:3000',
-  methods: ['GET', 'POST', 'DELETE'],
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   credentials: true,
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.options('*', cors(corsOptions));
 
-// Downloads directory 
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+/* Downloads directory  */
 const DOWNLOADS_DIR =
   process.env.DOWNLOADS_DIR ||
-  (process.env.NODE_ENV === 'production' ? '/tmp/downloads' : path.join(__dirname, 'downloads'));
+  (process.env.NODE_ENV === 'production'
+    ? '/tmp/downloads'
+    : path.join(__dirname, 'downloads'));
 
 if (!fs.existsSync(DOWNLOADS_DIR)) {
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
 
-// Cookies
-const cookiesPath = process.env.NODE_ENV === 'production' ? '/tmp/cookies.txt' : path.join(__dirname, 'cookies.txt');
+/* Cookies */
+const cookiesPath =
+  process.env.NODE_ENV === 'production'
+    ? '/tmp/cookies.txt'
+    : path.join(__dirname, 'cookies.txt');
+
 let hasCookies = fs.existsSync(cookiesPath);
 let cookieStatus = { valid: false, message: '', expiringSoon: false };
 
@@ -155,7 +184,9 @@ const checkCookieHealth = () => {
 
   try {
     const cookieContent = fs.readFileSync(cookiesPath, 'utf8');
-    const lines = cookieContent.split('\n').filter((line) => !line.startsWith('#') && line.trim());
+    const lines = cookieContent
+      .split('\n')
+      .filter((line) => !line.startsWith('#') && line.trim());
 
     if (lines.length === 0) {
       cookieStatus = { valid: false, message: 'cookies.txt is empty', expiringSoon: false };
@@ -230,17 +261,24 @@ const checkCookieHealth = () => {
 
     return cookieStatus;
   } catch (error) {
-    cookieStatus = { valid: false, message: `Error reading cookies: ${error.message}`, expiringSoon: false };
+    cookieStatus = {
+      valid: false,
+      message: `Error reading cookies: ${error.message}`,
+      expiringSoon: false,
+    };
     return cookieStatus;
   }
 };
 
-// Startup cookie check
 cookieStatus = checkCookieHealth();
 hasCookies = cookieStatus.valid;
-console.log(cookieStatus.valid ? ` Found cookies.txt - ${cookieStatus.message}` : ` Cookie issue: ${cookieStatus.message}`);
+console.log(
+  cookieStatus.valid
+    ? `Found cookies.txt - ${cookieStatus.message}`
+    : `Cookie issue: ${cookieStatus.message}`
+);
 
-// Disk space check
+/* Disk space check */
 const checkDiskSpace = async (requiredBytes = 0) => {
   try {
     const absolutePath = path.resolve(DOWNLOADS_DIR);
@@ -262,13 +300,17 @@ const checkDiskSpace = async (requiredBytes = 0) => {
         sufficient: freeBytes >= minRequired,
         message:
           freeBytes < minRequired
-            ? `Low disk space: ${freeGB}GB free. Need at least ${(minRequired / (1024 * 1024 * 1024)).toFixed(
-              2
-            )}GB.`
+            ? `Low disk space: ${freeGB}GB free. Need at least ${(
+                minRequired /
+                (1024 * 1024 * 1024)
+              ).toFixed(2)}GB.`
             : `${freeGB}GB available`,
       };
     } else {
-      const result = execSync(`df -B1 "${DOWNLOADS_DIR}" | tail -1 | awk '{print $4}'`, { encoding: 'utf8' }).trim();
+      const result = execSync(`df -B1 "${DOWNLOADS_DIR}" | tail -1 | awk '{print $4}'`, {
+        encoding: 'utf8',
+      }).trim();
+
       const freeBytes = parseInt(result, 10);
       const freeGB = (freeBytes / (1024 * 1024 * 1024)).toFixed(2);
       const minRequired = Math.max(1024 * 1024 * 1024, requiredBytes + 500 * 1024 * 1024);
@@ -277,7 +319,10 @@ const checkDiskSpace = async (requiredBytes = 0) => {
         freeBytes,
         freeGB: parseFloat(freeGB),
         sufficient: freeBytes >= minRequired,
-        message: freeBytes < minRequired ? `Low disk space: ${freeGB}GB free` : `${freeGB}GB available`,
+        message:
+          freeBytes < minRequired
+            ? `Low disk space: ${freeGB}GB free`
+            : `${freeGB}GB available`,
       };
     }
   } catch (error) {
@@ -286,17 +331,18 @@ const checkDiskSpace = async (requiredBytes = 0) => {
   }
 };
 
-// Best-effort cleanup old files
+/* Cleanup old files */
 app.use((req, res, next) => {
   if (Math.random() < 0.01) {
     fs.readdir(DOWNLOADS_DIR, (err, files) => {
       if (err) return;
       const now = Date.now();
+
       files.forEach((file) => {
         const filePath = path.join(DOWNLOADS_DIR, file);
         fs.stat(filePath, (err, stats) => {
           if (err) return;
-          if (now - stats.mtimeMs > 3600000) fs.unlink(filePath, () => { });
+          if (now - stats.mtimeMs > 3600000) fs.unlink(filePath, () => {});
         });
       });
     });
@@ -304,7 +350,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Helpers
+/* Helpers */
 const cleanYouTubeUrl = (url) => {
   try {
     const patterns = [
@@ -316,7 +362,7 @@ const cleanYouTubeUrl = (url) => {
       const match = url.match(pattern);
       if (match && match[1]) {
         const videoId = match[1];
-        console.log(` Extracted video ID: ${videoId} from URL`);
+        console.log(`Extracted video ID: ${videoId} from URL`);
         return `https://www.youtube.com/watch?v=${videoId}`;
       }
     }
@@ -327,7 +373,7 @@ const cleanYouTubeUrl = (url) => {
       const videoId = urlObj.pathname.slice(1);
       if (videoId && videoId.length >= 11) {
         const cleanId = videoId.substring(0, 11);
-        console.log(` Cleaned youtu.be URL: ${cleanId}`);
+        console.log(`Cleaned youtu.be URL: ${cleanId}`);
         return `https://www.youtube.com/watch?v=${cleanId}`;
       }
     }
@@ -335,7 +381,7 @@ const cleanYouTubeUrl = (url) => {
     if (urlObj.hostname.includes('youtube.com')) {
       const videoId = urlObj.searchParams.get('v');
       if (videoId) {
-        console.log(` Cleaned youtube.com URL: ${videoId}`);
+        console.log(`Cleaned youtube.com URL: ${videoId}`);
         return `https://www.youtube.com/watch?v=${videoId}`;
       }
     }
@@ -360,6 +406,7 @@ function sendProgress(downloadId, progressData) {
   const res = activeDownloads.get(downloadId);
   if (!res) return;
   if (res.writableEnded || res.destroyed) return;
+
   try {
     res.write(`data: ${JSON.stringify(progressData)}\n\n`);
   } catch (e) {
@@ -377,32 +424,25 @@ const detectPlatform = (url) => {
   return 'unknown';
 };
 
-// Helper to parse yt-dlp progress
 function parseYtDlpProgress(output) {
-  // Pattern: [download]  10.5% of 100.00MiB at 10.00MiB/s ETA 00:09
   const match = output.match(/(\d+\.?\d*)%/);
   if (match) return parseFloat(match[1]);
   return null;
 }
 
-
-// yt-dlp hardening defaults (especially for YouTube 403)
 function applyYtDlpHardening(options, url) {
-  // Retries
   options.retries = options.retries ?? 10;
   options.fragmentRetries = options.fragmentRetries ?? 10;
-
-  // Reduce network weirdness
   options.forceIpv4 = options.forceIpv4 ?? true;
   options.geoBypass = options.geoBypass ?? true;
 
-  // Headers to mimic a real browser
   const hdr = [
     'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language: en-US,en;q=0.9',
     'Sec-Fetch-Mode: navigate',
   ];
+
   if (isYouTube(url)) {
     hdr.push('Referer: https://www.youtube.com/');
   }
@@ -410,16 +450,12 @@ function applyYtDlpHardening(options, url) {
   if (!options.addHeader) options.addHeader = hdr;
   else if (Array.isArray(options.addHeader)) options.addHeader = [...options.addHeader, ...hdr];
 
-  // Small sleeps to avoid detection
   options.sleepRequests = options.sleepRequests ?? 1;
   options.sleepInterval = options.sleepInterval ?? 1;
-
-  // Keep your flags
   options.noWarnings = options.noWarnings ?? true;
   options.noCheckCertificates = options.noCheckCertificates ?? true;
   options.noPlaylist = options.noPlaylist ?? true;
 
-  // Cookies
   if (hasCookies && fs.existsSync(cookiesPath)) {
     options.cookies = options.cookies ?? cookiesPath;
   }
@@ -427,7 +463,7 @@ function applyYtDlpHardening(options, url) {
   return options;
 }
 
-// Routes
+/* Routes */
 app.get('/api/health', async (req, res) => {
   const diskInfo = await checkDiskSpace();
   const freshCookieStatus = checkCookieHealth();
@@ -448,7 +484,6 @@ app.post('/api/detect-platform', (req, res) => {
   res.json({ platform: detectPlatform(url), url });
 });
 
-// STEP 1 --> metadata
 app.post('/api/video-metadata', async (req, res) => {
   try {
     let { url } = req.body;
@@ -466,7 +501,7 @@ app.post('/api/video-metadata', async (req, res) => {
     );
 
     const info = await ytDlpExec(url, options);
-    console.log(' Got metadata for:', info.title);
+    console.log('Got metadata for:', info.title);
 
     res.json({
       title: info.title,
@@ -481,7 +516,9 @@ app.post('/api/video-metadata', async (req, res) => {
     const msg = error.message || '';
 
     if (msg.includes('Sign in') || msg.includes('cookies') || msg.includes('confirm your age')) {
-      return res.status(403).json({ error: 'Age-restricted or private video. Cookies may be expired.' });
+      return res
+        .status(403)
+        .json({ error: 'Age-restricted or private video. Cookies may be expired.' });
     }
     if (msg.includes('Video unavailable') || msg.includes('404')) {
       return res.status(404).json({ error: 'Video not found or unavailable.' });
@@ -494,7 +531,6 @@ app.post('/api/video-metadata', async (req, res) => {
   }
 });
 
-// STEP 2 -->  formats
 app.post('/api/video-formats', async (req, res) => {
   try {
     let { url } = req.body;
@@ -516,7 +552,6 @@ app.post('/api/video-formats', async (req, res) => {
     const formats = [];
     const seenQualities = new Set();
 
-    // Add "Best Quality" selector
     formats.push({
       formatId: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
       quality: 'Best Quality',
@@ -530,9 +565,14 @@ app.post('/api/video-formats', async (req, res) => {
     seenQualities.add('Best Quality');
 
     if (info.formats) {
-      // Video formats - skip m3u8 variants
       const videoFormats = info.formats
-        .filter((f) => f.vcodec !== 'none' && f.height && f.protocol !== 'm3u8_native' && f.protocol !== 'm3u8')
+        .filter(
+          (f) =>
+            f.vcodec !== 'none' &&
+            f.height &&
+            f.protocol !== 'm3u8_native' &&
+            f.protocol !== 'm3u8'
+        )
         .sort((a, b) => (b.height || 0) - (a.height || 0));
 
       for (const f of videoFormats) {
@@ -556,7 +596,6 @@ app.post('/api/video-formats', async (req, res) => {
         }
       }
 
-      // Audio formats
       const audioFormats = info.formats
         .filter((f) => {
           const hasAudio = f.acodec && f.acodec !== 'none';
@@ -596,14 +635,12 @@ app.post('/api/video-formats', async (req, res) => {
   }
 });
 
-// SSE progress
 app.get('/api/download-progress/:downloadId', (req, res) => {
   const { downloadId } = req.params;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
 
   res.write(`data: ${JSON.stringify({ status: 'connected', downloadId })}\n\n`);
 
@@ -621,14 +658,15 @@ app.get('/api/download-progress/:downloadId', (req, res) => {
   });
 });
 
-// download start
 app.post('/api/download-start', async (req, res) => {
   try {
     let { url, itag, formatId, convertToMp3, mp3Bitrate, mergeAudio, estimatedSize } = req.body;
     const downloadId = uuidv4();
     const format = formatId || itag;
 
-    if (!url || !format) return res.status(400).json({ error: 'URL and format are required' });
+    if (!url || !format) {
+      return res.status(400).json({ error: 'URL and format are required' });
+    }
 
     if (isYouTube(url)) url = cleanYouTubeUrl(url);
 
@@ -641,14 +679,14 @@ app.post('/api/download-start', async (req, res) => {
       });
     }
 
-    //re-check cookies and update hasCookies LIVE
     const freshCookieStatus = checkCookieHealth();
     hasCookies = freshCookieStatus.valid;
-    if (!freshCookieStatus.valid) console.warn(' Cookie warning:', freshCookieStatus.message);
+    if (!freshCookieStatus.valid) {
+      console.warn('Cookie warning:', freshCookieStatus.message);
+    }
 
     res.json({ downloadId, status: 'started', diskSpace: diskInfo });
 
-    // Wait for SSE client to connect (max 5s)
     await new Promise((resolve) => {
       if (activeDownloads.has(downloadId)) return resolve();
       const timeout = setTimeout(() => {
@@ -668,7 +706,6 @@ app.post('/api/download-start', async (req, res) => {
   }
 });
 
-// File download endpoint
 app.get('/api/download-file/:downloadId', (req, res) => {
   const { downloadId } = req.params;
   const { filename } = req.query;
@@ -694,7 +731,7 @@ app.get('/api/download-file/:downloadId', (req, res) => {
   });
 });
 
-// Facebook info + download 
+/* Facebook / Instagram / TikTok / Twitter */
 app.post('/api/facebook/video-info', async (req, res) => {
   try {
     const { url } = req.body;
@@ -709,7 +746,6 @@ app.post('/api/facebook/video-info', async (req, res) => {
       url
     );
 
-    // If non-YouTube and aria2c exists, only for downloads, not metadata.
     const info = await ytDlpExec(url, options);
 
     const formats = (info.formats || [])
@@ -736,15 +772,15 @@ app.post('/api/facebook/video-info', async (req, res) => {
         formats.length > 0
           ? formats
           : [
-            {
-              formatId: 'best',
-              quality: 'Best',
-              container: 'mp4',
-              filesize: null,
-              hasVideo: true,
-              hasAudio: true,
-            },
-          ],
+              {
+                formatId: 'best',
+                quality: 'Best',
+                container: 'mp4',
+                filesize: null,
+                hasVideo: true,
+                hasAudio: true,
+              },
+            ],
     });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Failed to fetch Facebook video info' });
@@ -788,7 +824,6 @@ app.post('/api/facebook/download-start', async (req, res) => {
   }
 });
 
-// Instagram, TikTok, Twitter 
 const handleGenericPlatformInfo = async (req, res, platform) => {
   try {
     const { url } = req.body;
@@ -805,10 +840,9 @@ const handleGenericPlatformInfo = async (req, res, platform) => {
 
     const info = await ytDlpExec(url, options);
 
-    // For these platforms, we usually just want the best format or a list of mp4 variants
     const formats = (info.formats || [])
-      .filter(f => f.ext === 'mp4' || (f.vcodec && f.vcodec !== 'none'))
-      .map(f => ({
+      .filter((f) => f.ext === 'mp4' || (f.vcodec && f.vcodec !== 'none'))
+      .map((f) => ({
         formatId: f.format_id,
         quality: f.height ? `${f.height}p` : f.format_note || 'Best',
         container: f.ext || 'mp4',
@@ -816,7 +850,7 @@ const handleGenericPlatformInfo = async (req, res, platform) => {
         hasVideo: true,
         hasAudio: f.acodec && f.acodec !== 'none',
       }))
-      .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+      .sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
 
     res.json({
       title: info.title || `${platform} Video`,
@@ -829,14 +863,19 @@ const handleGenericPlatformInfo = async (req, res, platform) => {
       description: info.description,
       caption: info.description || info.title,
       isPrivate: false,
-      formats: formats.length > 0 ? formats : [{
-        formatId: 'best',
-        quality: 'Best Quality',
-        container: 'mp4',
-        filesize: null,
-        hasVideo: true,
-        hasAudio: true
-      }]
+      formats:
+        formats.length > 0
+          ? formats
+          : [
+              {
+                formatId: 'best',
+                quality: 'Best Quality',
+                container: 'mp4',
+                filesize: null,
+                hasVideo: true,
+                hasAudio: true,
+              },
+            ],
     });
   } catch (e) {
     console.error(`${platform} info error:`, e.message);
@@ -853,12 +892,14 @@ const handleGenericPlatformDownloadStart = async (req, res, platform) => {
     let format = formatId || 'best';
 
     if (platform === 'tiktok' && removeWatermark) {
-
     }
 
     const diskInfo = await checkDiskSpace(estimatedSize || 500 * 1024 * 1024);
     if (!diskInfo.sufficient) {
-      return res.status(507).json({ error: 'Insufficient disk space', message: diskInfo.message });
+      return res.status(507).json({
+        error: 'Insufficient disk space',
+        message: diskInfo.message,
+      });
     }
 
     res.json({ downloadId, status: 'started', diskSpace: diskInfo });
@@ -882,17 +923,23 @@ const handleGenericPlatformDownloadStart = async (req, res, platform) => {
 };
 
 app.post('/api/instagram/video-info', (req, res) => handleGenericPlatformInfo(req, res, 'Instagram'));
-app.post('/api/instagram/download-start', (req, res) => handleGenericPlatformDownloadStart(req, res, 'Instagram'));
+app.post('/api/instagram/download-start', (req, res) =>
+  handleGenericPlatformDownloadStart(req, res, 'Instagram')
+);
 
 app.post('/api/tiktok/video-info', (req, res) => handleGenericPlatformInfo(req, res, 'TikTok'));
-app.post('/api/tiktok/download-start', (req, res) => handleGenericPlatformDownloadStart(req, res, 'TikTok'));
+app.post('/api/tiktok/download-start', (req, res) =>
+  handleGenericPlatformDownloadStart(req, res, 'TikTok')
+);
 
 app.post('/api/twitter/video-info', (req, res) => handleGenericPlatformInfo(req, res, 'Twitter'));
-app.post('/api/twitter/download-start', (req, res) => handleGenericPlatformDownloadStart(req, res, 'Twitter'));
+app.post('/api/twitter/download-start', (req, res) =>
+  handleGenericPlatformDownloadStart(req, res, 'Twitter')
+);
 
 app.post('/api/direct/download-start', async (req, res) => {
   try {
-    const { url, filename } = req.body;
+    const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
     const downloadId = uuidv4();
@@ -911,14 +958,13 @@ app.post('/api/direct/download-start', async (req, res) => {
       });
     });
 
-    // For direct URLs
     processDownload(downloadId, url, 'best', false, 192, false);
   } catch (e) {
     res.status(500).json({ error: e.message || 'Failed to start direct download' });
   }
 });
 
-// Download pipeline
+/* Download pipeline */
 async function processDownload(downloadId, url, format, convertToMp3, mp3Bitrate = 192, mergeAudio = false) {
   try {
     sendProgress(downloadId, { status: 'downloading', progress: 0, stage: 'Preparing download...' });
@@ -951,8 +997,6 @@ async function processDownload(downloadId, url, format, convertToMp3, mp3Bitrate
       outputPath = path.join(DOWNLOADS_DIR, `${downloadId}_${outputFilename}`);
       await downloadWithYtDlp(downloadId, url, format, outputPath, 'mp3', mp3Bitrate);
     } else if (mergeAudio && (isVideoOnly || selectorExpr)) {
-      // If selectorExpr user probably chose a "bestvideo+audio" type selector, let yt-dlp merge itself
-      // If pure video-only (actual id), do parallel merge
       outputFilename = `${safeTitle}.mp4`;
       outputPath = path.join(DOWNLOADS_DIR, `${downloadId}_${outputFilename}`);
 
@@ -975,7 +1019,6 @@ async function processDownload(downloadId, url, format, convertToMp3, mp3Bitrate
   }
 }
 
-// Parallel merge using yt-dlp for both streams + ffmpeg merge
 async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, info) {
   return new Promise(async (resolve, reject) => {
     try {
@@ -986,7 +1029,6 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
 
       const bestAudio = audioFormats[0];
       if (!bestAudio) {
-        // fallback: let yt-dlp try auto merge
         return downloadWithYtDlp(downloadId, url, `${videoFormat}+bestaudio`, outputPath, 'mp4')
           .then(resolve)
           .catch(reject);
@@ -995,20 +1037,14 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
       const videoPath = path.join(DOWNLOADS_DIR, `${downloadId}_video_temp.mp4`);
       const audioPath = path.join(DOWNLOADS_DIR, `${downloadId}_audio_temp.m4a`);
 
-      const baseOptions = applyYtDlpHardening(
-        {
-          // keep minimal, hardening adds important stuff
-        },
-        url
-      );
+      const baseOptions = applyYtDlpHardening({}, url);
 
-      // Use aria2c only for non-YouTube
       if (hasAria2c && !isYouTube(url)) {
         baseOptions.externalDownloader = aria2cPath;
         baseOptions.externalDownloaderArgs = '-x 16 -s 16 -k 1M --file-allocation=none';
-        console.log(' Using aria2c with 16 connections (non-YouTube)');
+        console.log('Using aria2c with 16 connections (non-YouTube)');
       } else if (isYouTube(url)) {
-        console.log(' YouTube detected - using native yt-dlp downloader for parallel merge');
+        console.log('YouTube detected - using native yt-dlp downloader for parallel merge');
       }
 
       sendProgress(downloadId, { status: 'downloading', progress: 5, stage: 'Parallel download starting...' });
@@ -1041,27 +1077,31 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
         }
       }, 500);
 
-      const videoPromise = ytDlpExec.exec(url, {
-        ...baseOptions,
-        format: videoFormat,
-        output: videoPath,
-        ffmpegLocation: ffmpegStatic,
-      }).then(() => {
-        videoComplete = true;
-        videoProgress = 100;
-        console.log(' Video download complete');
-      });
+      const videoPromise = ytDlpExec
+        .exec(url, {
+          ...baseOptions,
+          format: videoFormat,
+          output: videoPath,
+          ffmpegLocation: ffmpegStatic,
+        })
+        .then(() => {
+          videoComplete = true;
+          videoProgress = 100;
+          console.log('Video download complete');
+        });
 
-      const audioPromise = ytDlpExec.exec(url, {
-        ...baseOptions,
-        format: bestAudio.format_id,
-        output: audioPath,
-        ffmpegLocation: ffmpegStatic,
-      }).then(() => {
-        audioComplete = true;
-        audioProgress = 100;
-        console.log(' Audio download complete');
-      });
+      const audioPromise = ytDlpExec
+        .exec(url, {
+          ...baseOptions,
+          format: bestAudio.format_id,
+          output: audioPath,
+          ffmpegLocation: ffmpegStatic,
+        })
+        .then(() => {
+          audioComplete = true;
+          audioProgress = 100;
+          console.log('Audio download complete');
+        });
 
       await Promise.all([videoPromise, audioPromise]);
 
@@ -1077,21 +1117,25 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
           .outputOptions(['-c:v copy', '-c:a aac', '-b:a 192k', '-movflags +faststart', '-y'])
           .output(outputPath)
           .on('progress', (progress) => {
-            const p = 92 + ((progress.percent || 0) * 0.08);
-            sendProgress(downloadId, { status: 'processing', progress: Math.round(p), stage: 'Merging...' });
+            const p = 92 + (progress.percent || 0) * 0.08;
+            sendProgress(downloadId, {
+              status: 'processing',
+              progress: Math.round(p),
+              stage: 'Merging...',
+            });
           })
           .on('end', () => {
             try {
               if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
               if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-            } catch (e) { }
+            } catch (e) {}
             mergeResolve();
           })
           .on('error', (err) => {
             try {
               if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
               if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-            } catch (e) { }
+            } catch (e) {}
             mergeReject(err);
           })
           .run();
@@ -1104,7 +1148,6 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
   });
 }
 
-// Standard download with yt-dlp-exec + REAL progress parsing
 function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = null, audioBitrate = null) {
   return new Promise((resolve, reject) => {
     const baseOptions = {
@@ -1115,7 +1158,7 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
       noCheckCertificates: true,
       noPlaylist: true,
       progress: true,
-      newline: true, // Crucial for parsing
+      newline: true,
     };
 
     const options = applyYtDlpHardening(baseOptions, url);
@@ -1135,34 +1178,30 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
       options.mergeOutputFormat = 'mp4';
     }
 
-    console.log(` Starting download: ${url.substring(0, 50)}...`);
+    console.log(`Starting download: ${url.substring(0, 50)}...`);
 
-    // Use spawn for real-time output parsing
-    // yt-dlp-exec version 1.0.2 does not export .path directly. 
-    // We resolve it robustly from constants or manual path.
     let ytDlpPath = require('yt-dlp-exec').path;
     if (!ytDlpPath) {
       try {
         ytDlpPath = require('yt-dlp-exec/src/constants').YOUTUBE_DL_PATH;
       } catch (e) {
-        // Handle production environment (Linux) and windows fallback
         const binExt = process.platform === 'win32' ? '.exe' : '';
         ytDlpPath = path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', `yt-dlp${binExt}`);
       }
     }
 
-    // Convert options object to array of flags
     const args = [url];
     Object.entries(options).forEach(([key, val]) => {
-      if (val === true) args.push(`--${key.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`);
-      else if (val !== false && val !== null && val !== undefined) {
+      if (val === true) {
+        args.push(`--${key.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}`);
+      } else if (val !== false && val !== null && val !== undefined) {
         if (Array.isArray(val)) {
-          val.forEach(v => {
-            args.push(`--${key.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`);
+          val.forEach((v) => {
+            args.push(`--${key.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}`);
             args.push(v);
           });
         } else {
-          args.push(`--${key.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`);
+          args.push(`--${key.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}`);
           args.push(String(val));
         }
       }
@@ -1172,7 +1211,6 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
     let lastProgress = 0;
     const stage = hasAria2c && !isYouTube(url) ? '⚡ Multi-threaded download...' : 'Downloading...';
-
     let stderrBuffer = '';
 
     proc.stdout.on('data', (data) => {
@@ -1184,31 +1222,38 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
         sendProgress(downloadId, {
           status: 'downloading',
           progress: Math.round(progress),
-          stage: `${stage} ${Math.round(progress)}%`
+          stage: `${stage} ${Math.round(progress)}%`,
         });
       }
 
       if (output.includes('Merging') || output.includes('merging')) {
-        sendProgress(downloadId, { status: 'processing', progress: 95, stage: 'Merging streams...' });
+        sendProgress(downloadId, {
+          status: 'processing',
+          progress: 95,
+          stage: 'Merging streams...',
+        });
       }
     });
 
     proc.stderr.on('data', (data) => {
       const output = data.toString();
       stderrBuffer += output;
+
       const progress = parseYtDlpProgress(output);
       if (progress !== null && progress > lastProgress) {
         lastProgress = progress;
-        sendProgress(downloadId, { status: 'downloading', progress: Math.round(progress), stage });
+        sendProgress(downloadId, {
+          status: 'downloading',
+          progress: Math.round(progress),
+          stage,
+        });
       }
 
-      // Log errors but don't fail yet unless process exits
       if (output.includes('ERROR:')) {
         console.error(`yt-dlp error: ${output}`);
       }
     });
 
-    // 10 minute timeout for large downloads
     const timeout = setTimeout(() => {
       proc.kill();
       reject(new Error('Download timed out after 10 minutes'));
@@ -1216,16 +1261,21 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
+
       if (code === 0) {
-        sendProgress(downloadId, { status: 'processing', progress: 100, stage: 'Finalizing...' });
+        sendProgress(downloadId, {
+          status: 'processing',
+          progress: 100,
+          stage: 'Finalizing...',
+        });
         resolve();
       } else {
-        // Clean up stderr for user display
-        const cleanError = stderrBuffer
-          .split('\n')
-          .filter(line => line.includes('ERROR:') || line.includes('Warning:'))
-          .join('\n')
-          .trim() || stderrBuffer.trim().split('\n').pop();
+        const cleanError =
+          stderrBuffer
+            .split('\n')
+            .filter((line) => line.includes('ERROR:') || line.includes('Warning:'))
+            .join('\n')
+            .trim() || stderrBuffer.trim().split('\n').pop();
 
         reject(new Error(cleanError || `yt-dlp exited with code ${code}`));
       }
@@ -1238,13 +1288,12 @@ function downloadWithYtDlp(downloadId, url, format, outputPath, audioFormat = nu
   });
 }
 
-
-// Start server
-app.listen(PORT, 'localhost', () => {
-  console.log(` Server running on http://localhost:${PORT}`);
-  console.log(` API endpoints at http://localhost:${PORT}/api`);
-  console.log(`  FFmpeg path: ${ffmpegStatic}`);
-  console.log(' Localhost-only mode enabled');
+/* Start server*/
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
+  console.log(`API endpoints at http://${HOST}:${PORT}/api`);
+  console.log(`FFmpeg path: ${ffmpegStatic}`);
+  console.log(`Allowed CORS origins: ${allowedOrigins.join(', ') || 'none configured'}`);
 });
 
 module.exports = app;
