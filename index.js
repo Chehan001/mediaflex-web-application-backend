@@ -130,7 +130,7 @@ try {
             return fullPath;
           }
         }
-      } catch (e) {}
+      } catch (e) { }
       return null;
     };
 
@@ -138,7 +138,7 @@ try {
     if (found) aria2cPaths.unshift(found);
     aria2cPaths = Array.from(new Set(aria2cPaths));
   }
-} catch (e) {}
+} catch (e) { }
 
 for (const p of aria2cPaths) {
   try {
@@ -148,7 +148,7 @@ for (const p of aria2cPaths) {
     console.log(`aria2c found at: ${p.length > 50 ? '...' + p.slice(-47) : p}`);
     console.log('Multi-threaded downloads enabled (16 connections) for non-YouTube');
     break;
-  } catch (e) {}
+  } catch (e) { }
 }
 
 if (!hasAria2c) {
@@ -332,7 +332,7 @@ app.use((req, res, next) => {
         const filePath = path.join(DOWNLOADS_DIR, file);
         fs.stat(filePath, (err, stats) => {
           if (err) return;
-          if (now - stats.mtimeMs > 3600000) fs.unlink(filePath, () => {});
+          if (now - stats.mtimeMs > 3600000) fs.unlink(filePath, () => { });
         });
       });
     });
@@ -421,20 +421,6 @@ function applyYtDlpHardening(options, url) {
   options.fragmentRetries = options.fragmentRetries ?? 10;
   options.forceIpv4 = options.forceIpv4 ?? true;
   options.geoBypass = options.geoBypass ?? true;
-
-  const hdr = [
-    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'Accept-Language: en-US,en;q=0.9',
-    'Sec-Fetch-Mode: navigate',
-  ];
-
-  if (isYouTube(url)) {
-    hdr.push('Referer: https://www.youtube.com/');
-  }
-
-  if (!options.addHeader) options.addHeader = hdr;
-  else if (Array.isArray(options.addHeader)) options.addHeader = [...options.addHeader, ...hdr];
 
   options.sleepRequests = options.sleepRequests ?? 1;
   options.sleepInterval = options.sleepInterval ?? 1;
@@ -751,15 +737,15 @@ app.post('/api/facebook/video-info', async (req, res) => {
         formats.length > 0
           ? formats
           : [
-              {
-                formatId: 'best',
-                quality: 'Best',
-                container: 'mp4',
-                filesize: null,
-                hasVideo: true,
-                hasAudio: true,
-              },
-            ],
+            {
+              formatId: 'best',
+              quality: 'Best',
+              container: 'mp4',
+              filesize: null,
+              hasVideo: true,
+              hasAudio: true,
+            },
+          ],
     });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Failed to fetch Facebook video info' });
@@ -846,15 +832,15 @@ const handleGenericPlatformInfo = async (req, res, platform) => {
         formats.length > 0
           ? formats
           : [
-              {
-                formatId: 'best',
-                quality: 'Best Quality',
-                container: 'mp4',
-                filesize: null,
-                hasVideo: true,
-                hasAudio: true,
-              },
-            ],
+            {
+              formatId: 'best',
+              quality: 'Best Quality',
+              container: 'mp4',
+              filesize: null,
+              hasVideo: true,
+              hasAudio: true,
+            },
+          ],
     });
   } catch (e) {
     console.error(`${platform} info error:`, e.message);
@@ -1082,14 +1068,14 @@ async function downloadParallelMerge(downloadId, url, videoFormat, outputPath, i
             try {
               if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
               if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-            } catch (e) {}
+            } catch (e) { }
             mergeResolve();
           })
           .on('error', (err) => {
             try {
               if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
               if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-            } catch (e) {}
+            } catch (e) { }
             mergeReject(err);
           })
           .run();
