@@ -432,8 +432,36 @@ function applyYtDlpHardening(options, url) {
     options.cookies = options.cookies ?? cookiesPath;
   }
 
+  // Add options to prevent 403 errors on playback and downloading
+  options.rmCacheDir = true;
+
   return options;
 }
+
+// Image Proxy to prevent 403 Forbidden on browser image loads
+app.get('/api/proxy-image', async (req, res) => {
+  try {
+    const imageUrl = req.query.url;
+    if (!imageUrl) return res.status(400).send('URL required');
+
+    const axios = require('axios');
+    const response = await axios.get(imageUrl, {
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.youtube.com/',
+      },
+      timeout: 10000,
+    });
+
+    res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Image proxy failed:', error.message);
+    res.status(404).send('Not found');
+  }
+});
 
 // Routes
 app.get('/api/health', async (req, res) => {
