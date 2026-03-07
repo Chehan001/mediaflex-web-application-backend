@@ -19,9 +19,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const activeDownloads = new Map();
 const downloadReadyCallbacks = new Map();
 
-// ---------------------------
 // CORS
-// ---------------------------
 const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -49,9 +47,7 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
 
-// ---------------------------
 // Cookie Conversion
-// ---------------------------
 const convertCookiesIfMissing = () => {
   const jsonPath = path.join(__dirname, 'cookies.json');
   const txtPath =
@@ -104,9 +100,7 @@ const convertCookiesIfMissing = () => {
 
 convertCookiesIfMissing();
 
-// ---------------------------
 // aria2c detection
-// ---------------------------
 let hasAria2c = false;
 let aria2cPath = 'aria2c';
 const userLocalAppData = process.env.LOCALAPPDATA || '';
@@ -161,9 +155,7 @@ if (!hasAria2c) {
   console.log('aria2c not found - using standard downloads');
 }
 
-// ---------------------------
 // Downloads directory
-// ---------------------------
 const DOWNLOADS_DIR =
   process.env.DOWNLOADS_DIR ||
   (process.env.NODE_ENV === 'production'
@@ -174,9 +166,7 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
 
-// ---------------------------
 // Cookies
-// ---------------------------
 const cookiesPath =
   process.env.NODE_ENV === 'production'
     ? '/tmp/cookies.txt'
@@ -285,9 +275,7 @@ console.log(
     : `Cookie issue: ${cookieStatus.message}`
 );
 
-// ---------------------------
 // Disk space check
-// ---------------------------
 const checkDiskSpace = async (requiredBytes = 0) => {
   try {
     const absolutePath = path.resolve(DOWNLOADS_DIR);
@@ -334,9 +322,7 @@ const checkDiskSpace = async (requiredBytes = 0) => {
   }
 };
 
-// ---------------------------
 // Cleanup old files
-// ---------------------------
 app.use((req, res, next) => {
   if (Math.random() < 0.01) {
     fs.readdir(DOWNLOADS_DIR, (err, files) => {
@@ -354,9 +340,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------------------------
 // Helpers
-// ---------------------------
 const cleanYouTubeUrl = (url) => {
   try {
     const patterns = [
@@ -465,9 +449,7 @@ function applyYtDlpHardening(options, url) {
   return options;
 }
 
-// ---------------------------
 // Routes
-// ---------------------------
 app.get('/api/health', async (req, res) => {
   const diskInfo = await checkDiskSpace();
   const freshCookieStatus = checkCookieHealth();
